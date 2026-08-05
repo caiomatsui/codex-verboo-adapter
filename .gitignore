@@ -1,0 +1,12 @@
+﻿# Environment / secrets
+.env
+.env.local
+.env.*.local
+
+# Node
+node_modules/
+
+# Logs / temp
+*.log
+logs/
+tmp/
