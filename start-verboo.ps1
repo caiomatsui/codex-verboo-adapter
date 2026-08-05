@@ -43,13 +43,38 @@ try {
 
   # Fetch the live model catalog from the adapter (built from the Verboo /models
   # endpoint for the pasted API key) so /model lists every available model.
-  $catalogJson = Invoke-RestMethod -Uri "http://127.0.0.1:$port/catalog" -Method Get -TimeoutSec 20
-  $catalogJson | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $catalogPath -Encoding UTF8
+  # Retry a few times; if it still fails, keep the committed verboo.json so
+  # Codex can still start.
+  $catalogJson = $null
+  for ($attempt = 0; $attempt -lt 3; $attempt++) {
+    try {
+      $catalogJson = Invoke-RestMethod -Uri "http://127.0.0.1:$port/catalog" -Method Get -TimeoutSec 20
+      break
+    } catch {
+      Write-Warning "Could not fetch the live model catalog (attempt $($attempt + 1)/3): $($_.Exception.Message)"
+      if ($attempt -lt 2) { Start-Sleep -Seconds 1 }
+    }
+  }
+  if ($catalogJson -and $catalogJson.models.Count -gt 0) {
+    $catalogJson | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $catalogPath -Encoding UTF8
+  } else {
+    Write-Warning 'Using the committed model catalog (verboo.json) because the live catalog is unavailable.'
+  }
+
+  # Plan-adaptive default: the adapter resolves it (deepseek-v4-flash when the
+  # plan includes it, otherwise the first available model for the key).
+  $defaultModel = 'deepseek-v4-flash'
+  try {
+    $defaultModel = (Invoke-RestMethod -Uri "http://127.0.0.1:$port/catalog/default-model" -Method Get -TimeoutSec 10).default_model
+  } catch {
+    Write-Warning "Could not resolve the default model ($($_.Exception.Message)); using 'deepseek-v4-flash'."
+  }
+  Write-Host "Verboo Codex adapter ready - default model: $defaultModel (use /model to switch)"
 
   $env:CODEX_HOME = $PSScriptRoot
   & codex `
     -c "model_catalog_json='$catalogPath'" `
-    -c "model='deepseek-v4-flash'" `
+    -c "model='$defaultModel'" `
     -c "model_provider='verboo'" `
     -c "model_providers.verboo.base_url='http://127.0.0.1:$port/v1'" `
     @CodexArgs

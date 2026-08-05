@@ -1,5 +1,8 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const portArgument = process.argv.indexOf('--port');
 const port = Number(portArgument >= 0 ? process.argv[portArgument + 1] : process.env.VERBOO_PROXY_PORT || 4319);
@@ -9,6 +12,11 @@ const responseSessions = new Map();
 
 const modelsCache = { data: null, fetchedAt: 0 };
 const MODELS_CACHE_TTL_MS = 60_000;
+
+// Committed fallback catalog shipped with the repo. Used when the live Verboo
+// /models call fails or returns no models, so Codex still starts.
+const FALLBACK_CATALOG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'verboo.json');
+const DEFAULT_MODEL = 'deepseek-v4-flash';
 
 if (!apiKey) {
   console.error('VERBOO_API_KEY is required before starting the Verboo Codex adapter.');
@@ -68,15 +76,50 @@ function catalogEntryFor(model, index) {
   };
 }
 
+function loadFallbackCatalog() {
+  try {
+    const raw = fs.readFileSync(FALLBACK_CATALOG_PATH, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed?.models) || parsed.models.length === 0) return [];
+    return parsed.models.map((entry) => ({
+      id: entry.slug,
+      context_window: entry.context_window,
+      vision: Array.isArray(entry.input_modalities) && entry.input_modalities.includes('image'),
+      reasoning: { effort_levels: (entry.supported_reasoning_levels || []).map((l) => l.effort) }
+    }));
+  } catch (error) {
+    console.error(`Could not read fallback catalog at ${FALLBACK_CATALOG_PATH}:`, error.message);
+  }
+  return [];
+}
+
+function defaultModelFor(models) {
+  if (models.some((model) => model.slug === DEFAULT_MODEL)) return DEFAULT_MODEL;
+  const first = models[0]?.slug;
+  return first || DEFAULT_MODEL;
+}
+
 async function buildCatalog() {
-  const models = await fetchModels();
-  // Keep deepseek-v4-flash first so it stays the default model.
-  const sorted = [...models].sort((a, b) => {
-    if (a.id === 'deepseek-v4-flash') return -1;
-    if (b.id === 'deepseek-v4-flash') return 1;
+  let models;
+  try {
+    models = await fetchModels();
+  } catch (error) {
+    console.error('Verboo /models unavailable, falling back to committed catalog:', error.message);
+    models = [];
+  }
+  if (!Array.isArray(models) || models.length === 0) {
+    console.error('Verboo /models returned no models, falling back to committed catalog.');
+    models = loadFallbackCatalog();
+  }
+  const entries = models.map(catalogEntryFor);
+  // Prefer deepseek-v4-flash so it stays the default when the plan includes it.
+  const sorted = [...entries].sort((a, b) => {
+    if (a.slug === DEFAULT_MODEL) return -1;
+    if (b.slug === DEFAULT_MODEL) return 1;
     return 0;
   });
-  return { models: sorted.map(catalogEntryFor) };
+  const defaultModel = defaultModelFor(sorted);
+  return { models: sorted, default_model: defaultModel };
 }
 
 function json(response, statusCode, payload) {
@@ -307,8 +350,13 @@ function streamResponse(response, completed) {
 async function handleResponses(request, response) {
   const payload = await readJson(request);
   const messages = requestMessages(payload);
+  let resolvedModel = payload.model;
+  if (!resolvedModel) {
+    try { resolvedModel = (await buildCatalog()).default_model; }
+    catch { resolvedModel = DEFAULT_MODEL; }
+  }
   const upstreamPayload = {
-    model: payload.model || 'deepseek-v4-flash',
+    model: resolvedModel,
     messages,
     stream: false
   };
@@ -350,6 +398,10 @@ const server = http.createServer(async (request, response) => {
     if (request.method === 'GET' && request.url === '/catalog') {
       try { return json(response, 200, await buildCatalog()); }
       catch (error) { return json(response, 502, { error: { message: error instanceof Error ? error.message : 'Failed to build catalog.' } }); }
+    }
+    if (request.method === 'GET' && request.url === '/catalog/default-model') {
+      try { return json(response, 200, { default_model: (await buildCatalog()).default_model }); }
+      catch (error) { return json(response, 502, { error: { message: error instanceof Error ? error.message : 'Failed to resolve default model.' } }); }
     }
     if (request.method === 'GET' && request.url === '/v1/models') {
       try { return json(response, 200, { object: 'list', data: await fetchModels() }); }

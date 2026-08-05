@@ -1,4 +1,4 @@
-﻿# codex-verboo
+# codex-verboo
 
 Run **Verboo Code** models inside [OpenAI Codex](https://github.com/openai/codex) on Windows.
 
@@ -18,7 +18,7 @@ start-verboo.ps1
       │  5. fetches /catalog (all models for your key) → verboo.json
       │  6. launches Codex with:
       │        model_catalog_json = verboo.json
-      │        model              = deepseek-v4-flash (default)
+      │        model              = plan-adaptive default (deepseek-v4-flash when available)
       │        model_provider     = verboo
       │        base_url           = http://127.0.0.1:<port>/v1
       ▼
@@ -95,16 +95,21 @@ $env:VERBOO_API_KEY = "your_verboo_api_key"
 
 ## Models
 
-By default the adapter opens the **`deepseek-v4-flash`** model. All models available to the API key you pasted are loaded into Codex, so once connected you can switch models with the `/model` command inside Codex and pick any of them.
+The adapter opens with a **plan-adaptive default model**:
 
-The available models are fetched live from Verboo's `/models` endpoint for your key each time you launch, so the list always reflects what your account can use.
+- If your plan includes **`deepseek-v4-flash`**, it is the default.
+- Otherwise, the first available model for your key is used (for example, Junior plans start with `qwen3.6-27b`).
+
+All models available to the API key you pasted are loaded into Codex, so once connected you can switch models with the `/model` command inside Codex and pick any of them. The list always reflects your plan — Junior, Pro, Max, Ultra, or Growth — because it is fetched live from Verboo's `/models` endpoint with your key at every launch.
+
+If Verboo's `/models` endpoint is temporarily unavailable, the adapter falls back to the committed `verboo.json` catalog and still starts Codex with `deepseek-v4-flash`.
 
 ## Configuration
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VERBOO_API_KEY` | *(required)* | Verboo Code API key |
-| `VERBOO_BASE_URL` | `https://code.verboo.ai/router/v1` | Upstream Verboo endpoint |
+| `VERBOO_BASE_URL` | `https://code.verboo.ai/router/v1` | Upstream Verboo endpoint (used for both `/models` and `/chat/completions`) |
 | `VERBOO_PROXY_PORT` | `4319` | Port the proxy listens on when not started by the launcher |
 
 > The launcher picks a free port automatically and passes it to the proxy, so `VERBOO_PROXY_PORT` only matters if you run `verboo-responses-proxy.mjs` directly.
@@ -122,6 +127,6 @@ Then point Codex at `http://127.0.0.1:4319/v1`.
 
 ## Notes
 
-- The model catalog (`verboo.json`) is regenerated on every launch from Verboo's `/models` endpoint, so it always reflects the models available to your API key. `deepseek-v4-flash` is kept as the default.
+- The model catalog (`verboo.json`) is regenerated on every launch from Verboo's `/models` endpoint, so it always reflects the models available to your API key. The default is `deepseek-v4-flash` when the plan includes it, otherwise the first available model.
 - Only the adapter is shipped here — no personal data, secrets, or unrelated project files are included.
 - This is a Windows launcher; a `.sh`/bash variant would be needed for macOS/Linux (the proxy itself is cross-platform).
