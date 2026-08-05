@@ -4,7 +4,7 @@ param(
   [string[]]$CodexArgs
 )
 
-$projectRoot = Split-Path -Parent $PSScriptRoot
+$projectRoot = $PSScriptRoot
 $envFile = Join-Path $projectRoot '.env'
 $proxyPath = Join-Path $PSScriptRoot 'verboo-responses-proxy.mjs'
 $catalogPath = Join-Path $PSScriptRoot 'verboo.json'
