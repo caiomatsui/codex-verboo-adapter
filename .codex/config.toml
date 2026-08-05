@@ -1,0 +1,11 @@
+# Verboo Code provider for Codex CLI.
+# The codex-verboo launcher overrides base_url per run to point at the
+# loopback adapter, so the address below is only a placeholder.
+[model_providers.verboo]
+name = "Verboo Code (local Responses adapter)"
+base_url = "http://127.0.0.1:4319/v1"
+env_key = "VERBOO_API_KEY"
+wire_api = "responses"
+request_max_retries = 1
+stream_max_retries = 1
+stream_idle_timeout_ms = 7200000

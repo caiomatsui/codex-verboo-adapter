@@ -10,3 +10,7 @@ node_modules/
 *.log
 logs/
 tmp/
+
+# Codex CLI runtime scratch
+.codex/tmp/
+.codex/sessions/
