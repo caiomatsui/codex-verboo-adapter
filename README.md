@@ -8,32 +8,32 @@ Codex speaks the OpenAI **Responses API**, while Verboo exposes the **Chat Compl
 
 ```
 codex-verboo.cmd
-      │  (Windows launcher)
-      ▼
+      |  (Windows launcher)
+      v
 start-verboo.ps1
-      │  1. reads VERBOO_API_KEY from .env
-      │  2. picks a free loopback port
-      │  3. starts verboo-responses-proxy.mjs on that port
-      │  4. waits for its /health endpoint
-      │  5. fetches /catalog (all models for your key) → verboo.json
-      │  6. launches Codex with:
-      │        model_catalog_json = verboo.json
-      │        model              = plan-adaptive default (deepseek-v4-flash when available)
-      │        model_provider     = verboo
-      │        base_url           = http://127.0.0.1:<port>/v1
-      ▼
+      |  1. reads VERBOO_API_KEY from .env
+      |  2. picks a free loopback port
+      |  3. starts verboo-responses-proxy.mjs on that port
+      |  4. waits for its /health endpoint
+      |  5. fetches /catalog (all models for your key) -> verboo.json
+      |  6. launches Codex with:
+      |        model_catalog_json = verboo.json
+      |        model              = plan-adaptive default (deepseek-v4-flash when available)
+      |        model_provider     = verboo
+      |        base_url           = http://127.0.0.1:<port>/v1
+      v
 verboo-responses-proxy.mjs  (Node HTTP proxy)
-      │  GET /catalog  → builds Codex model catalog from Verboo /models
-      │  POST /v1/responses  (Codex side)
-      │     ├- Responses input items  → Chat Completions messages
-      │     ├- tools / tool_choice    → translated
-      │     └- session history        → kept in memory (previous_response_id)
-      ▼
+      |  GET /catalog  -> builds Codex model catalog from Verboo /models
+      |  POST /v1/responses  (Codex side)
+      |     |- Responses input items  -> Chat Completions messages
+      |     |- tools / tool_choice    -> translated
+      |     '- session history        -> kept in memory (previous_response_id)
+      v
 Verboo Chat Completions API  (https://code.verboo.ai/router/v1)
-      │  response translated back:
-      │     Chat Completions choices → Responses output items
-      │     SSE stream               → re-emitted as Responses events
-      ▼
+      |  response translated back:
+      |     Chat Completions choices -> Responses output items
+      |     SSE stream               -> re-emitted as Responses events
+      v
 back to Codex
 ```
 
@@ -45,8 +45,10 @@ When Codex exits, the launcher stops the proxy automatically.
 |------|---------|
 | `codex-verboo.cmd` | Entry-point launcher (Windows) |
 | `start-verboo.ps1` | Orchestrates the proxy + Codex launch, loads the key, cleans up |
-| `verboo-responses-proxy.mjs` | The translation proxy (Responses ↔ Chat Completions, incl. streaming) |
+| `verboo-responses-proxy.mjs` | The translation proxy (Responses <-> Chat Completions, incl. streaming) |
+| `.codex/config.toml` | Defines the `verboo` model provider for Codex (`CODEX_HOME`) |
 | `verboo.json` | Codex model catalog, regenerated at launch from Verboo `/models` |
+| `.env` | Your API key (git-ignored, you create it) |
 
 ## Requirements
 
@@ -67,10 +69,16 @@ VERBOO_API_KEY=your_verboo_api_key
 
 ## Usage
 
-To open Codex with Verboo, just open a terminal **inside this folder** and run `codex-verboo` instead of `codex`:
+To open Codex with Verboo, open a terminal **inside this folder** and run `codex-verboo` instead of `codex`:
 
 ```powershell
 .\codex-verboo.cmd
+```
+
+On first launch you should see:
+
+```
+Verboo Codex adapter ready - default model: deepseek-v4-flash (use /model to switch)
 ```
 
 Any combination of flags that works for `codex` also works for `codex-verboo`. For example, if you would normally run `codex --yolo`, run:
@@ -93,6 +101,13 @@ $env:VERBOO_API_KEY = "your_verboo_api_key"
 .\codex-verboo.cmd
 ```
 
+## Daily use
+
+- **Default model:** the adapter picks `deepseek-v4-flash` when your plan includes it, otherwise the first model available to your key.
+- **Switch models:** type `/model` inside Codex and pick any model shown. The list is built from the models your key can use, so it matches your plan (Junior, Pro, Max, Ultra, Growth...).
+- **Rate/limits:** heavier models may be slower or rate-limited depending on your plan — that is Verboo-side behavior, not the adapter.
+- **No leftover processes:** the proxy is started for your session and stopped when you exit Codex.
+
 ## Models
 
 The adapter opens with a **plan-adaptive default model**:
@@ -100,7 +115,7 @@ The adapter opens with a **plan-adaptive default model**:
 - If your plan includes **`deepseek-v4-flash`**, it is the default.
 - Otherwise, the first available model for your key is used (for example, Junior plans start with `qwen3.6-27b`).
 
-All models available to the API key you pasted are loaded into Codex, so once connected you can switch models with the `/model` command inside Codex and pick any of them. The list always reflects your plan — Junior, Pro, Max, Ultra, or Growth — because it is fetched live from Verboo's `/models` endpoint with your key at every launch.
+All models available to the API key are loaded into Codex at launch, so `/model` lists exactly what your plan allows. The list is fetched live from Verboo's `/models` endpoint with your key every time you start.
 
 If Verboo's `/models` endpoint is temporarily unavailable, the adapter falls back to the committed `verboo.json` catalog and still starts Codex with `deepseek-v4-flash`.
 
@@ -124,6 +139,13 @@ node verboo-responses-proxy.mjs --port 4319
 ```
 
 Then point Codex at `http://127.0.0.1:4319/v1`.
+
+## Troubleshooting
+
+- **"VERBOO_API_KEY is not set"** — create `.env` next to `codex-verboo.cmd` with `VERBOO_API_KEY=...` or set it in the shell.
+- **"provider name must not be empty" / config errors** — make sure `.codex/config.toml` is present (it is included in this repo; do not delete it).
+- **`/model` shows only one model** — Verboo `/models` was unreachable and the fallback catalog was used; check your network/API key and restart.
+- **Port already in use** — the launcher picks a free port automatically, so this should not happen; if you run the proxy manually, use `--port` to change it.
 
 ## Notes
 
