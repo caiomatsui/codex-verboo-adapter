@@ -1,4 +1,4 @@
-﻿# Environment / secrets
+# Environment / secrets
 .env
 .env.local
 .env.*.local
@@ -14,3 +14,17 @@ tmp/
 # Codex CLI runtime scratch
 .codex/tmp/
 .codex/sessions/
+
+# Codex CLI runtime state (created on first run in CODEX_HOME)
+.codex/goals_*.sqlite*
+.codex/logs_*.sqlite*
+.codex/memories_*.sqlite*
+.codex/state_*.sqlite*
+.codex/history.jsonl
+.codex/installation_id
+.codex/version.json
+.codex/cap_sid
+.codex/.sandbox_migration
+.codex/.personality_migration
+.codex/.tmp/
+.codex/sandbox.*.log
