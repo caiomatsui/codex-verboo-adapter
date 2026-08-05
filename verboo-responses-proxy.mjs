@@ -7,9 +7,76 @@ const upstreamBaseUrl = (process.env.VERBOO_BASE_URL || 'https://code.verboo.ai/
 const apiKey = process.env.VERBOO_API_KEY;
 const responseSessions = new Map();
 
+const modelsCache = { data: null, fetchedAt: 0 };
+const MODELS_CACHE_TTL_MS = 60_000;
+
 if (!apiKey) {
   console.error('VERBOO_API_KEY is required before starting the Verboo Codex adapter.');
   process.exit(1);
+}
+
+const BASE_INSTRUCTIONS = "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and let the user run it manually. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.";
+
+async function fetchModels() {
+  if (modelsCache.data && Date.now() - modelsCache.fetchedAt < MODELS_CACHE_TTL_MS) {
+    return modelsCache.data;
+  }
+  const upstream = await fetch(`${upstreamBaseUrl}/models`, {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}` }
+  });
+  const body = await upstream.json().catch(() => ({}));
+  if (!upstream.ok) {
+    throw new Error(body?.error?.message || `Failed to list models from Verboo (${upstream.status}).`);
+  }
+  const data = Array.isArray(body?.data) ? body.data : [];
+  modelsCache.data = data;
+  modelsCache.fetchedAt = Date.now();
+  return data;
+}
+
+function reasoningLevelsFor(model) {
+  const levels = model.reasoning?.effort_levels || [];
+  const supported = [];
+  if (levels.includes('high')) supported.push({ effort: 'high', description: 'High reasoning' });
+  if (levels.includes('max')) supported.push({ effort: 'xhigh', description: 'Maximum reasoning' });
+  if (levels.includes('none') || levels.length === 0) supported.push({ effort: 'low', description: 'Standard reasoning' });
+  return supported;
+}
+
+function catalogEntryFor(model, index) {
+  const id = model.id;
+  const vision = !!model.vision;
+  return {
+    slug: id,
+    display_name: `Verboo ${id}`,
+    context_window: model.context_window || 1000000,
+    shell_type: 'shell_command',
+    visibility: 'list',
+    supported_in_api: true,
+    priority: index,
+    supported_reasoning_levels: reasoningLevelsFor(model),
+    base_instructions: BASE_INSTRUCTIONS,
+    supports_reasoning_summaries: false,
+    default_reasoning_summary: 'none',
+    support_verbosity: false,
+    apply_patch_tool_type: 'freeform',
+    input_modalities: vision ? ['text', 'image'] : ['text'],
+    truncation_policy: { mode: 'tokens', limit: 10000 },
+    supports_parallel_tool_calls: true,
+    experimental_supported_tools: []
+  };
+}
+
+async function buildCatalog() {
+  const models = await fetchModels();
+  // Keep deepseek-v4-flash first so it stays the default model.
+  const sorted = [...models].sort((a, b) => {
+    if (a.id === 'deepseek-v4-flash') return -1;
+    if (b.id === 'deepseek-v4-flash') return 1;
+    return 0;
+  });
+  return { models: sorted.map(catalogEntryFor) };
 }
 
 function json(response, statusCode, payload) {
@@ -280,6 +347,14 @@ async function handleResponses(request, response) {
 const server = http.createServer(async (request, response) => {
   try {
     if (request.method === 'GET' && request.url === '/health') return json(response, 200, { status: 'ok' });
+    if (request.method === 'GET' && request.url === '/catalog') {
+      try { return json(response, 200, await buildCatalog()); }
+      catch (error) { return json(response, 502, { error: { message: error instanceof Error ? error.message : 'Failed to build catalog.' } }); }
+    }
+    if (request.method === 'GET' && request.url === '/v1/models') {
+      try { return json(response, 200, { object: 'list', data: await fetchModels() }); }
+      catch (error) { return json(response, 502, { error: { message: error instanceof Error ? error.message : 'Failed to list models.' } }); }
+    }
     if (request.method === 'POST' && request.url === '/v1/responses') return await handleResponses(request, response);
     json(response, 404, { error: { message: 'Not found.' } });
   } catch (error) {

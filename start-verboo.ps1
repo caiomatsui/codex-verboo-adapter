@@ -41,6 +41,11 @@ try {
   }
   if (-not $ready) { throw 'Timed out while starting the Verboo Codex adapter.' }
 
+  # Fetch the live model catalog from the adapter (built from the Verboo /models
+  # endpoint for the pasted API key) so /model lists every available model.
+  $catalogJson = Invoke-RestMethod -Uri "http://127.0.0.1:$port/catalog" -Method Get -TimeoutSec 20
+  $catalogJson | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $catalogPath -Encoding UTF8
+
   $env:CODEX_HOME = $PSScriptRoot
   & codex `
     -c "model_catalog_json='$catalogPath'" `
