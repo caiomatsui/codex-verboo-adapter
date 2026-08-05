@@ -56,7 +56,7 @@ try {
     }
   }
   if ($catalogJson -and $catalogJson.models.Count -gt 0) {
-    $catalogJson | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $catalogPath -Encoding UTF8
+    [System.IO.File]::WriteAllText($catalogPath, ($catalogJson | ConvertTo-Json -Depth 10), [System.Text.UTF8Encoding]::new($false))
   } else {
     Write-Warning 'Using the committed model catalog (verboo.json) because the live catalog is unavailable.'
   }
@@ -77,6 +77,7 @@ try {
     -c "model='$defaultModel'" `
     -c "model_provider='verboo'" `
     -c "model_providers.verboo.base_url='http://127.0.0.1:$port/v1'" `
+    -c "model_providers.verboo.name='Verboo Code (local Responses adapter)'" `
     @CodexArgs
   exit $LASTEXITCODE
 } finally {
