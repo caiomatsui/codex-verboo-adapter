@@ -82,12 +82,12 @@ try {
     $catalogPath = $fallbackCatalogPath
   }
 
-  # Plan-adaptive default: deepseek-v4-flash when available, else first model.
-  $defaultModel = 'deepseek-v4-flash'
+  # Plan-adaptive default: deepseek-v4-flash-0731 when available, else first model.
+  $defaultModel = 'deepseek-v4-flash-0731'
   try {
     $defaultModel = (Invoke-RestMethod -Uri "http://127.0.0.1:$port/catalog/default-model" -Method Get -TimeoutSec 10).default_model
   } catch {
-    Write-Warning "Could not resolve the default model ($($_.Exception.Message)); using 'deepseek-v4-flash'."
+    Write-Warning "Could not resolve the default model ($($_.Exception.Message)); using 'deepseek-v4-flash-0731'."
   }
   Write-Host "Verboo Codex adapter ready - default model: $defaultModel (use /model to switch)"
 

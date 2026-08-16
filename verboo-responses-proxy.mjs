@@ -16,7 +16,7 @@ const MODELS_CACHE_TTL_MS = 60_000;
 // Committed fallback catalog shipped with the repo. Used when the live Verboo
 // /models call fails or returns no models, so Codex still starts.
 const FALLBACK_CATALOG_PATH = path.join(path.dirname(fileURLToPath(import.meta.url)), 'verboo.json');
-const DEFAULT_MODEL = 'deepseek-v4-flash';
+const DEFAULT_MODEL = 'deepseek-v4-flash-0731';
 
 if (!apiKey) {
   console.error('VERBOO_API_KEY is required before starting the Verboo Codex adapter.');
@@ -43,13 +43,27 @@ async function fetchModels() {
   return data;
 }
 
+// Advertise the full set of reasoning efforts Codex understands so the /model
+// picker always offers Standard, High and Maximum. Verboo's /models may not
+// yet announce effort levels for newly added models (e.g. deepseek-v4-flash-0731),
+// but the chat/completions endpoint accepts and honors them anyway. If a level
+// is ever rejected upstream, the proxy falls back to the model's default effort.
+const EFFORT_LEVELS = [
+  { effort: 'low', description: 'Standard reasoning' },
+  { effort: 'high', description: 'High reasoning' },
+  { effort: 'xhigh', description: 'Maximum reasoning' }
+];
+
 function reasoningLevelsFor(model) {
-  const levels = model.reasoning?.effort_levels || [];
-  const supported = [];
-  if (levels.includes('high')) supported.push({ effort: 'high', description: 'High reasoning' });
-  if (levels.includes('max')) supported.push({ effort: 'xhigh', description: 'Maximum reasoning' });
-  if (levels.includes('none') || levels.length === 0) supported.push({ effort: 'low', description: 'Standard reasoning' });
-  return supported;
+  const announced = model.reasoning?.effort_levels || [];
+  // Keep the default (Standard) first, then High, then Maximum. If Verboo
+  // announces none, still expose the full set so the user can pick any level.
+  const hasNone = Array.isArray(announced) && announced.includes('none');
+  if (Array.isArray(announced) && announced.length > 0 && !hasNone) {
+    const announcedSet = new Set(announced);
+    return EFFORT_LEVELS.filter((level) => announcedSet.has(level.effort) || announcedSet.has(level.effort === 'xhigh' ? 'max' : level.effort));
+  }
+  return EFFORT_LEVELS.slice();
 }
 
 function catalogEntryFor(model, index) {
@@ -65,6 +79,7 @@ function catalogEntryFor(model, index) {
     priority: index,
     supported_reasoning_levels: reasoningLevelsFor(model),
     base_instructions: BASE_INSTRUCTIONS,
+    default_reasoning_level: 'xhigh',
     supports_reasoning_summaries: false,
     default_reasoning_summary: 'none',
     support_verbosity: false,
@@ -364,6 +379,16 @@ async function handleResponses(request, response) {
   if (tools) upstreamPayload.tools = tools;
   const toolChoice = requestToolChoice(payload.tool_choice);
   if (toolChoice) upstreamPayload.tool_choice = toolChoice;
+
+  // Translate Codex's Responses reasoning.effort into Verboo's
+  // chat/completions reasoning_effort. Codex sends { effort: "low" | "high" |
+  // "xhigh" | "max" | ... }; Verboo accepts low/medium/high/xhigh/max. Unknown
+  // values are dropped so an upstream 4xx (invalid effort) can never be caused
+  // by a value Verboo does not recognize.
+  const reasoningEffort = payload.reasoning?.effort;
+  if (reasoningEffort && (reasoningEffort === 'low' || reasoningEffort === 'medium' || reasoningEffort === 'high' || reasoningEffort === 'xhigh' || reasoningEffort === 'max')) {
+    upstreamPayload.reasoning_effort = reasoningEffort;
+  }
 
   const upstream = await fetch(`${upstreamBaseUrl}/chat/completions`, {
     method: 'POST',

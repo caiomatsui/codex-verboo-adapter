@@ -1,8 +1,8 @@
 {
   "models": [
     {
-      "slug": "deepseek-v4-flash",
-      "display_name": "Verboo DeepSeek V4 Flash",
+      "slug": "deepseek-v4-flash-0731",
+      "display_name": "Verboo DeepSeek V4 Flash 0731",
       "context_window": 1000000,
       "shell_type": "shell_command",
       "visibility": "list",
@@ -11,7 +11,15 @@
       "supported_reasoning_levels": [
         {
           "effort": "low",
-          "description": "Standard reasoning routed through Verboo"
+          "description": "Standard reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "High reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Maximum reasoning"
         }
       ],
       "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and let the user run it manually. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
