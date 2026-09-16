@@ -2,8 +2,8 @@
   "models": [
     {
       "slug": "deepseek-v4-flash-0731",
-      "display_name": "Verboo DeepSeek V4 Flash 0731",
-      "context_window": 1000000,
+      "display_name": "Verboo deepseek-v4-flash-0731",
+      "context_window": 1048576,
       "shell_type": "shell_command",
       "visibility": "list",
       "supported_in_api": true,
@@ -11,15 +11,23 @@
       "supported_reasoning_levels": [
         {
           "effort": "low",
-          "description": "Standard reasoning"
+          "description": "Default reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Reasoning"
         },
         {
           "effort": "high",
-          "description": "High reasoning"
+          "description": "Reasoning"
         },
         {
           "effort": "xhigh",
-          "description": "Maximum reasoning"
+          "description": "Reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Reasoning"
         }
       ],
       "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and let the user run it manually. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
@@ -27,7 +35,189 @@
       "default_reasoning_summary": "none",
       "support_verbosity": false,
       "apply_patch_tool_type": "freeform",
-      "input_modalities": ["text"],
+      "input_modalities": [
+        "text"
+      ],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    },
+    {
+      "slug": "deepseek-v4-flash",
+      "display_name": "Verboo deepseek-v4-flash",
+      "context_window": 1048576,
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 1,
+      "supported_reasoning_levels": [
+        {
+          "effort": "high",
+          "description": "Default reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Reasoning"
+        }
+      ],
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and let the user run it manually. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": [
+        "text"
+      ],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    },
+    {
+      "slug": "deepseek-v4.1-flash",
+      "display_name": "Verboo deepseek-v4.1-flash",
+      "context_window": 1048576,
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 2,
+      "supported_reasoning_levels": [
+        {
+          "effort": "1",
+          "description": "Default reasoning"
+        },
+        {
+          "effort": "25",
+          "description": "Reasoning"
+        },
+        {
+          "effort": "50",
+          "description": "Reasoning"
+        },
+        {
+          "effort": "100",
+          "description": "Reasoning"
+        }
+      ],
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and let the user run it manually. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    },
+    {
+      "slug": "glm-5.3-flash",
+      "display_name": "Verboo glm-5.3-flash",
+      "context_window": 1048576,
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 3,
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Default reasoning"
+        },
+        {
+          "effort": "high",
+          "description": "Reasoning"
+        },
+        {
+          "effort": "max",
+          "description": "Reasoning"
+        }
+      ],
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and let the user run it manually. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    },
+    {
+      "slug": "mimo-v2.5",
+      "display_name": "Verboo mimo-v2.5",
+      "context_window": 1048576,
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 4,
+      "supported_reasoning_levels": [],
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and let the user run it manually. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "experimental_supported_tools": []
+    },
+    {
+      "slug": "qwen3.8-27b",
+      "display_name": "Verboo qwen3.8-27b",
+      "context_window": 262144,
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "supported_in_api": true,
+      "priority": 5,
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Reasoning"
+        },
+        {
+          "effort": "xhigh",
+          "description": "Reasoning"
+        },
+        {
+          "effort": "none",
+          "description": "Default reasoning"
+        }
+      ],
+      "base_instructions": "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and let the user run it manually. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.",
+      "supports_reasoning_summaries": false,
+      "default_reasoning_summary": "none",
+      "support_verbosity": false,
+      "apply_patch_tool_type": "freeform",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
       "truncation_policy": {
         "mode": "tokens",
         "limit": 10000
@@ -35,5 +225,6 @@
       "supports_parallel_tool_calls": true,
       "experimental_supported_tools": []
     }
-  ]
+  ],
+  "default_model": "deepseek-v4-flash-0731"
 }

@@ -25,6 +25,7 @@ verboo-responses-proxy.mjs  (Node HTTP proxy)
       |  POST /v1/responses  (Codex side)
       |     |- Responses input items  -> Chat Completions messages
       |     |- tools / tool_choice    -> translated
+      |     |- reasoning.effort       -> per-model reasoning_effort
       |     '- session history        -> kept in memory (previous_response_id)
       v
 Verboo Chat Completions API  (https://code.verboo.ai/router/v1)
@@ -107,6 +108,15 @@ You can also pass a prompt directly, just like `codex`:
 .\codex-verboo.cmd --yolo "refactor this module"
 ```
 
+Pick the reasoning level for the session with `--effort` (Verboo levels: `none`, `low`, `medium`, `high`, `xhigh`, `max`):
+
+```powershell
+.\codex-verboo.cmd --effort max
+.\codex-verboo.cmd --effort max "refactor this module"
+```
+
+`--effort` is an adapter flag: it is consumed by the launcher and never forwarded to Codex, which has no such option.
+
 The launcher reads `VERBOO_API_KEY` from `.env`, or you can set it in your shell environment instead:
 
 ```powershell
@@ -116,8 +126,10 @@ $env:VERBOO_API_KEY = "your_verboo_api_key"
 
 ## Daily use
 
-- **Default model:** the adapter picks `deepseek-v4-flash` when your plan includes it, otherwise the first model available to your key.
+- **Default model:** the adapter picks `deepseek-v4-flash-0731` when your plan includes it, otherwise the first model available to your key.
 - **Switch models:** type `/model` inside Codex and pick any model shown. The list is built from the models your key can use, so it matches your plan (Junior, Pro, Max, Ultra, Growth...).
+- **Reasoning level:** the session starts at `xhigh` unless you pass `--effort <level>` or set `VERBOO_REASONING_EFFORT`. To change it mid-session, use `/model` and pick the model's reasoning entry. Verboo's highest level, **Max**, is under `More reasoning...` -> `Advanced Reasoning` (Codex keeps Max/Ultra behind that second step so they cannot be picked by accident).
+- **Levels are per model:** the adapter publishes exactly the levels Verboo announces for each model, so a level Verboo would reject is never offered.
 - **Rate/limits:** heavier models may be slower or rate-limited depending on your plan — that is Verboo-side behavior, not the adapter.
 - **No leftover processes:** the proxy is started for your session and stopped when you exit Codex.
 - **Clean folder:** runtime state is written only inside `codex-verboo-runtime/`; if you want to fully reset, just delete that folder.
@@ -126,12 +138,32 @@ $env:VERBOO_API_KEY = "your_verboo_api_key"
 
 The adapter opens with a **plan-adaptive default model**:
 
-- If your plan includes **`deepseek-v4-flash`**, it is the default.
+- If your plan includes **`deepseek-v4-flash-0731`**, it is the default.
 - Otherwise, the first available model for your key is used (for example, Junior plans start with `qwen3.6-27b`).
 
 All models available to the API key are loaded into Codex at launch, so `/model` lists exactly what your plan allows. The list is fetched live from Verboo's `/models` endpoint with your key every time you start.
 
-If Verboo's `/models` endpoint is temporarily unavailable, the adapter falls back to the committed `verboo.json` catalog and still starts Codex with `deepseek-v4-flash`.
+If Verboo's `/models` endpoint is temporarily unavailable, the adapter falls back to the committed `verboo.json` catalog (a static snapshot of the models below) and still starts Codex with `deepseek-v4-flash-0731`.
+
+### Reasoning levels
+
+Verboo announces a different reasoning scale per model, and rejects levels outside that scale with HTTP 400. The adapter translates each announcement into Codex's vocabulary, so the picker shows exactly what the model accepts:
+
+| Model | Levels offered in Codex | Default | Notes |
+|-------|-------------------------|---------|-------|
+| `deepseek-v4-flash-0731` | low, medium, high, xhigh, **max** | `xhigh` | Full scale |
+| `deepseek-v4-flash` | high, **max** | `xhigh` | Only two levels |
+| `glm-5.3-flash` | low, high, **max** | `xhigh` | Only three levels |
+| `qwen3.8-27b` | none, low, medium, xhigh | `xhigh` | No Max |
+| `deepseek-v4.1-flash` | none, low, high, xhigh, **max** | `xhigh` | Verboo announces a numeric budget (`1`/`25`/`50`/`100`) that the router does not accept on the wire, so the adapter maps it onto the words that model does accept |
+| `mimo-v2.5` | low, high, xhigh, **max** | `xhigh` | Announces no scale; the router accepts any level |
+
+Two translation rules are worth knowing:
+
+- **Max is Max.** Verboo's `max` is published to Codex as `max`, which is what makes it appear under `More reasoning...` -> `Advanced Reasoning`. Earlier adapter versions collapsed it into `xhigh`, which hid the level entirely.
+- **Ultra maps to Max.** Codex's `ultra` ("maximum reasoning with automatic task delegation") has no Verboo equivalent and the router rejects the word, so it is sent as `max`.
+
+If a level somehow reaches Verboo that the model rejects, the adapter drops it (falling back to the model's own default) and, if the request still fails with HTTP 400, retries once without any level rather than failing the turn.
 
 ## Configuration
 
@@ -140,6 +172,7 @@ If Verboo's `/models` endpoint is temporarily unavailable, the adapter falls bac
 | `VERBOO_API_KEY` | *(required)* | Verboo Code API key |
 | `VERBOO_BASE_URL` | `https://code.verboo.ai/router/v1` | Upstream Verboo endpoint (used for both `/models` and `/chat/completions`) |
 | `VERBOO_PROXY_PORT` | `4319` | Port the proxy listens on when not started by the launcher |
+| `VERBOO_REASONING_EFFORT` | `xhigh` | Reasoning level new conversations start at (`none`/`low`/`medium`/`high`/`xhigh`/`max`). The launcher sets this from `--effort` when you pass one |
 
 > The launcher picks a free port automatically and passes it to the proxy, so `VERBOO_PROXY_PORT` only matters if you run `verboo-responses-proxy.mjs` directly.
 
@@ -159,10 +192,13 @@ Then point Codex at `http://127.0.0.1:4319/v1`.
 - **"VERBOO_API_KEY is not set"** — create `.env` **inside the repo folder** with `VERBOO_API_KEY=...` or set it in the shell.
 - **"provider name must not be empty" / config errors** — the launcher generates the provider config at runtime; if you see this, make sure `codex-verboo-runtime/config.toml` was created (delete the folder and relaunch).
 - **`/model` shows only one model** — Verboo `/models` was unreachable and the fallback catalog was used; check your network/API key and restart.
+- **Max does not appear in `/model`** — Max is nested: pick the model, then choose `More reasoning...` and then `Max`. It only appears for models whose Verboo scale includes `max` (see the table above); `qwen3.8-27b` has no Max.
+- **`invalid request` / HTTP 400 from Verboo** — the model rejected the reasoning level. The adapter filters levels per model and retries once without the level, so this should not surface; if it does, check the proxy log line naming the model and level.
+- **Session starts at the wrong level** — `--effort` wins over `VERBOO_REASONING_EFFORT`, which wins over the `xhigh` default. The launcher prints the resolved model and level on startup.
 - **Port already in use** — the launcher picks a free port automatically, so this should not happen; if you run the proxy manually, use `--port` to change it.
 
 ## Notes
 
-- The model catalog is regenerated on every launch from Verboo's `/models` endpoint, so it always reflects the models available to your API key. The default is `deepseek-v4-flash` when the plan includes it, otherwise the first available model.
+- The model catalog is regenerated on every launch from Verboo's `/models` endpoint, so it always reflects the models available to your API key, including each model's reasoning levels. The default is `deepseek-v4-flash-0731` when the plan includes it, otherwise the first available model.
 - Only the adapter is shipped here — no personal data, secrets, or unrelated project files are included.
 - This is a Windows launcher; a `.sh`/bash variant would be needed for macOS/Linux (the proxy itself is cross-platform).
