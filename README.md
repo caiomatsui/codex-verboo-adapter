@@ -165,6 +165,35 @@ Two translation rules are worth knowing:
 
 If a level somehow reaches Verboo that the model rejects, the adapter drops it (falling back to the model's own default) and, if the request still fails with HTTP 400, retries once without any level rather than failing the turn.
 
+## Images
+
+Codex returns image results (for example from `view_image`) as Responses `input_image` parts inside a
+`function_call_output`. The adapter forwards them like this:
+
+1. **Tool messages stay text-only.** The images are pulled out of the tool output and the tool message keeps
+   only its text, plus a note such as `[4 images attached in the next message]`. Images placed inside a tool
+   message are ignored by the router, so the model would never see them.
+2. **Images are re-attached as real content parts** in a `user` message that follows the tool results, each
+   labelled with the tool call it came from. Inline images in a normal message are forwarded as content parts
+   too, instead of being stringified into text.
+3. **Downscale budget.** Images above **400 KB** are resized to at most **1568 px** on the long edge and
+   re-encoded as JPEG quality 82 before sending. This uses [sharp](https://sharp.pixelplumbing.com/) when it is
+   installed (optional, loaded lazily); without it images are forwarded at their original size. A request
+   carries at most **8 MB** of image data - anything beyond that is replaced by a text placeholder rather than
+   dropped silently.
+4. **400 retry.** If Verboo still rejects a request that carries images, the adapter retries that turn once with
+   the images replaced by text placeholders, so a refused image degrades to "no image" instead of a failed turn.
+
+Why the old behaviour broke: stringifying the image parts into the tool text turned base64 into ordinary text,
+and the router answers HTTP 400 `{"code":"unclassified","error":"invalid request"}` once roughly 1.5 MB of
+base64 accumulates in one request - even though the same frames sent as real image parts are accepted.
+
+To install the optional downscaler:
+
+```powershell
+npm install sharp
+```
+
 ## Configuration
 
 | Variable | Default | Description |
@@ -195,6 +224,9 @@ Then point Codex at `http://127.0.0.1:4319/v1`.
 - **Max does not appear in `/model`** — Max is nested: pick the model, then choose `More reasoning...` and then `Max`. It only appears for models whose Verboo scale includes `max` (see the table above); `qwen3.8-27b` has no Max.
 - **`invalid request` / HTTP 400 from Verboo** — the model rejected the reasoning level. The adapter filters levels per model and retries once without the level, so this should not surface; if it does, check the proxy log line naming the model and level.
 - **Session starts at the wrong level** — `--effort` wins over `VERBOO_REASONING_EFFORT`, which wins over the `xhigh` default. The launcher prints the resolved model and level on startup.
+- **HTTP 400 `invalid request` on a turn that used `view_image`** - the images are being sent as text or the
+  request is over the image budget. Check the proxy log for `forwarding N image(s) as content parts`; if it says
+  `retrying without images`, the router refused the images and the turn continued without them.
 - **Port already in use** — the launcher picks a free port automatically, so this should not happen; if you run the proxy manually, use `--port` to change it.
 
 ## Notes

@@ -9,6 +9,24 @@ const port = Number(portArgument >= 0 ? process.argv[portArgument + 1] : process
 const upstreamBaseUrl = (process.env.VERBOO_BASE_URL || 'https://code.verboo.ai/router/v1').replace(/\/$/, '');
 const apiKey = process.env.VERBOO_API_KEY;
 const responseSessions = new Map();
+let responseSessionBytes = 0;
+
+// Stored turns now carry images, so the history store is capped by total bytes
+// as well as by count; the oldest turns are dropped first.
+const MAX_RESPONSE_SESSIONS = 100;
+const MAX_RESPONSE_SESSION_BYTES = 64 * 1024 * 1024;
+
+function rememberSession(id, messages) {
+  const bytes = JSON.stringify(messages).length;
+  responseSessions.set(id, { messages, bytes });
+  responseSessionBytes += bytes;
+  while (responseSessions.size > MAX_RESPONSE_SESSIONS
+    || (responseSessionBytes > MAX_RESPONSE_SESSION_BYTES && responseSessions.size > 1)) {
+    const oldest = responseSessions.keys().next().value;
+    responseSessionBytes -= responseSessions.get(oldest).bytes;
+    responseSessions.delete(oldest);
+  }
+}
 
 const modelsCache = { data: null, fetchedAt: 0 };
 const MODELS_CACHE_TTL_MS = 60_000;
@@ -24,6 +42,126 @@ if (!apiKey) {
 }
 
 const BASE_INSTRUCTIONS = "Before recommending or running any command that could stop, restart, or replace the environment you are running in, first determine whether you are executing inside that same environment. If you might be, do not run it yourself: warn the user explicitly that the command will end this session and let the user run it manually. Never force-kill processes by raw PID against arbitrary or unknown PID lists. To stop a dev server or free a port, stop the owning task by name; otherwise ask the user before terminating any PID.";
+
+// ---- Images ---------------------------------------------------------------
+//
+// Codex returns image results (view_image) as Responses "input_image" parts
+// inside a function_call_output. Forwarding those parts as they arrive caused
+// two problems:
+//
+//   1. Verboo's router ignores images that sit inside a tool message, so the
+//      model never actually saw the frame.
+//   2. Stringifying the parts into the tool text (the previous behaviour) hid
+//      the image from the model *and* broke the request: inline data URLs in
+//      text are rejected once a request carries roughly 1.5 MB of base64,
+//      answering HTTP 400 {"code":"unclassified","error":"invalid request"}.
+//
+// Images are therefore forwarded as real image content parts in a user message
+// that follows the tool results, and oversized images are downscaled first.
+
+const MAX_IMAGE_BYTES_PER_IMAGE = 400 * 1024;
+const MAX_IMAGE_BYTES_PER_REQUEST = 8 * 1024 * 1024;
+const MAX_IMAGE_DIMENSION = 1568;
+const IMAGE_JPEG_QUALITY = 82;
+
+// sharp is optional: when it is missing the adapter still runs, it just
+// forwards images at their original size.
+let sharpPromise;
+function loadSharp() {
+  if (!sharpPromise) {
+    sharpPromise = import('sharp').then((module) => module.default).catch(() => null);
+  }
+  return sharpPromise;
+}
+
+function parseImageDataUrl(url) {
+  if (typeof url !== 'string') return null;
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,(.+)$/i.exec(url);
+  return match ? { mediaType: match[1], base64: match[2] } : null;
+}
+
+function imageUrlOf(part) {
+  if (!part) return null;
+  if (typeof part.image_url === 'string') return part.image_url;
+  if (part.image_url && typeof part.image_url.url === 'string') return part.image_url.url;
+  return null;
+}
+
+function imageDetailOf(part) {
+  if (!part) return 'high';
+  if (part.image_url && typeof part.image_url === 'object' && part.image_url.detail) return part.image_url.detail;
+  return part.detail || 'high';
+}
+
+function isImagePart(part) {
+  return !!part && (part.type === 'input_image' || part.type === 'image_url') && !!imageUrlOf(part);
+}
+
+// Codex sends images either as Responses "input_image" parts or as
+// chat-completions "image_url" parts; both are normalised to one shape.
+function imagePartsFromContent(content) {
+  if (!Array.isArray(content)) return [];
+  return content.filter(isImagePart).map((part) => ({ url: imageUrlOf(part), detail: imageDetailOf(part) }));
+}
+
+function imageContentPart(image) {
+  return { type: 'image_url', image_url: { url: image.url, detail: image.detail } };
+}
+
+// Downscales one data URL when it is larger than the per-image budget. Returns
+// the original URL when sharp is unavailable or the result would not be smaller.
+async function shrinkImageUrl(url) {
+  const parsed = parseImageDataUrl(url);
+  if (!parsed || parsed.base64.length <= MAX_IMAGE_BYTES_PER_IMAGE) return url;
+  const sharp = await loadSharp();
+  if (!sharp) return url;
+  try {
+    const source = Buffer.from(parsed.base64, 'base64');
+    const resized = await sharp(source)
+      .resize({ width: MAX_IMAGE_DIMENSION, height: MAX_IMAGE_DIMENSION, fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: IMAGE_JPEG_QUALITY })
+      .toBuffer();
+    if (resized.length >= source.length) return url;
+    return `data:image/jpeg;base64,${resized.toString('base64')}`;
+  } catch (error) {
+    console.error('Verboo adapter: could not downscale an image:', error instanceof Error ? error.message : error);
+    return url;
+  }
+}
+
+async function shrinkImagesInMessages(messages) {
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const part of message.content) {
+      const url = imageUrlOf(part);
+      if (!url) continue;
+      const shrunk = await shrinkImageUrl(url);
+      if (shrunk === url) continue;
+      if (typeof part.image_url === 'string') part.image_url = shrunk;
+      else part.image_url.url = shrunk;
+    }
+  }
+}
+
+function messagesContainImages(messages) {
+  return messages.some((message) => Array.isArray(message.content) && message.content.some(isImagePart));
+}
+
+// Last-resort degradation: swap every image for a text note so a rejected
+// request can be retried instead of failing the whole turn.
+function stripImagesFromMessages(messages) {
+  let removed = 0;
+  const stripped = messages.map((message) => {
+    if (!Array.isArray(message.content)) return message;
+    const content = message.content.map((part) => {
+      if (!isImagePart(part)) return part;
+      removed += 1;
+      return { type: 'text', text: '[image omitted: this request could not carry images]' };
+    });
+    return { ...message, content };
+  });
+  return { messages: stripped, removed };
+}
 
 async function fetchModels() {
   if (modelsCache.data && Date.now() - modelsCache.fetchedAt < MODELS_CACHE_TTL_MS) {
@@ -324,12 +462,17 @@ function outputToHistoryMessages(output) {
 }
 
 function requestMessages(payload) {
-  const previous = payload.previous_response_id ? responseSessions.get(payload.previous_response_id) : null;
+  const stored = payload.previous_response_id ? responseSessions.get(payload.previous_response_id) : null;
+  const previous = stored ? stored.messages : null;
   const messages = previous ? [...previous] : [];
   if (!previous && payload.instructions) messages.push({ role: 'system', content: payload.instructions });
 
   const input = Array.isArray(payload.input) ? payload.input : [payload.input];
   const pendingToolCalls = [];
+  const toolNames = new Map();
+  const attachedImages = [];
+  let attachedImageBytes = 0;
+
   const flushToolCalls = () => {
     if (!pendingToolCalls.length) return;
     messages.push({
@@ -342,16 +485,62 @@ function requestMessages(payload) {
       }))
     });
   };
+
+  // Images cannot travel inside a tool message (Verboo ignores them), so they
+  // are collected here and attached to one user message after the tool results,
+  // each labelled with the tool call it came from.
+  const queueImages = (images, label) => {
+    for (const image of images) {
+      if (attachedImageBytes + image.url.length > MAX_IMAGE_BYTES_PER_REQUEST) {
+        attachedImages.push({ url: null, detail: null, label: `${label} [image omitted: image budget for one request exceeded]` });
+        continue;
+      }
+      attachedImageBytes += image.url.length;
+      attachedImages.push({ url: image.url, detail: image.detail, label });
+    }
+  };
+
   for (const item of input) {
     if (item?.type === 'function_call') {
       pendingToolCalls.push(item);
+      toolNames.set(item.call_id || item.id, item.name);
       continue;
     }
     flushToolCalls();
+
+    if (item?.type === 'function_call_output') {
+      const outputParts = Array.isArray(item.output) ? item.output : null;
+      const images = outputParts ? imagePartsFromContent(outputParts) : [];
+      const text = outputParts ? textFromContent(outputParts) : String(item.output ?? '');
+      const note = images.length ? `\n[${images.length} image${images.length > 1 ? 's' : ''} attached in the next message]` : '';
+      messages.push({ role: 'tool', tool_call_id: item.call_id, content: `${text}${note}` });
+      queueImages(images, `${toolNames.get(item.call_id) || 'tool'} ${item.call_id}:`);
+      continue;
+    }
+
+    const inlineImages = imagePartsFromContent(item?.content);
+    if (inlineImages.length) {
+      const text = textFromContent(item?.content);
+      const parts = text ? [{ type: 'text', text }] : [];
+      for (const image of inlineImages) parts.push(imageContentPart(image));
+      messages.push({ role: 'user', content: parts });
+      continue;
+    }
+
     const message = itemToMessage(item);
     if (message) messages.push(message);
   }
   flushToolCalls();
+
+  if (attachedImages.length) {
+    const labels = attachedImages.map((image) => image.label).join('; ');
+    const parts = [{ type: 'text', text: `Image output of the tool calls above (${labels}):` }];
+    for (const image of attachedImages) {
+      parts.push(image.url ? imageContentPart(image) : { type: 'text', text: image.label });
+    }
+    messages.push({ role: 'user', content: parts });
+  }
+
   return messages;
 }
 
@@ -473,6 +662,11 @@ function streamResponse(response, completed) {
 async function handleResponses(request, response) {
   const payload = await readJson(request);
   const messages = requestMessages(payload);
+  const imageCount = messages.reduce((total, message) => total + (Array.isArray(message.content) ? message.content.filter(isImagePart).length : 0), 0);
+  if (imageCount) {
+    await shrinkImagesInMessages(messages);
+    console.error(`Verboo adapter: forwarding ${imageCount} image(s) as content parts.`);
+  }
   let resolvedModel = payload.model;
   if (!resolvedModel) {
     try { resolvedModel = (await buildCatalog()).default_model; }
@@ -515,6 +709,16 @@ async function handleResponses(request, response) {
     upstreamText = await upstream.text();
     upstreamBody = parseJsonOrEmpty(upstreamText);
   }
+
+  // Second safety net: an image the router refuses (too large, unsupported
+  // encoding) must not kill the turn. Retry once with text placeholders.
+  if (upstream.status === 400 && messagesContainImages(upstreamPayload.messages)) {
+    const stripped = stripImagesFromMessages(upstreamPayload.messages);
+    console.error(`Verboo adapter: upstream rejected a request carrying ${stripped.removed} image(s) for ${resolvedModel}; retrying without images.`);
+    upstream = await postChatCompletions({ ...upstreamPayload, messages: stripped.messages });
+    upstreamText = await upstream.text();
+    upstreamBody = parseJsonOrEmpty(upstreamText);
+  }
   if (!upstream.ok) {
     json(response, upstream.status, {
       error: {
@@ -527,8 +731,7 @@ async function handleResponses(request, response) {
 
   const completed = responsesPayload(upstreamBody, upstreamPayload.model);
   const assistantMessages = outputToHistoryMessages(completed.output);
-  responseSessions.set(completed.id, [...messages, ...assistantMessages]);
-  if (responseSessions.size > 100) responseSessions.delete(responseSessions.keys().next().value);
+  rememberSession(completed.id, [...messages, ...assistantMessages]);
 
   if (payload.stream) streamResponse(response, completed);
   else json(response, 200, completed);
